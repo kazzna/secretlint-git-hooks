@@ -1,0 +1,38 @@
+#!/bin/bash
+
+source `dirname ${0}`/_local-hook-exec
+
+declare zero=$(git hash-object --stdin </dev/null | tr '[0-9a-f]' '0')
+
+while read local_ref local_oid remote_ref remote_oid
+do
+    if [ ! "$local_oid" = "$zero" ]
+    then
+        # When it's not deleting
+        echo "  ▶ Check credentials by secretlint"
+        declare temp_dir=$(mktemp -d)
+        trap 'rm -rf -- "$temp_dir"' EXIT
+
+        # Check all pushing files
+        git ls-tree -r "$local_oid" | cut -d ' ' -f 3 | while read -r object file_path
+        do
+            file_dir="$temp_dir"/$(dirname "$file_path")
+            if [ ! -d "$file_dir" ]
+            then
+                mkdir -p "$file_dir"
+            fi
+            git show "$object" > "$temp_dir/$file_path"
+        done
+
+        docker run --rm \
+            --mount type=bind,source="$temp_dir",target=$(pwd) --workdir $(pwd) \
+            secretlint/secretlint secretlint '**/*'
+        RET=$?
+        if [ "$RET" -ne 0 ]
+        then
+            exit "$RET"
+        fi
+    fi
+done
+
+exit 0
